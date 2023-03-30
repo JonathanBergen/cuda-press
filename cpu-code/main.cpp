@@ -1,61 +1,76 @@
-#include <stdio.h>
-#include <stdlib.h>
+#include <iostream>
+#include <string>
+#include <filesystem>
 #include <opencv2/opencv.hpp>
+#include "k_means.h"
 
+using namespace std;
+namespace fs = std::filesystem;
 
-using namespace cv;
+int main(int argc, char* argv[]) {
+  // Parse command-line arguments
+  if (argc != 4) {
+    cerr << "Usage: " << argv[0] << " k num_iterations input_image" << endl;
+    return 1;
+  }
+  const int k = stoi(argv[1]);
+  const int num_iterations = stoi(argv[2]);
+  const string input_filename = argv[3];
 
-int main() {
-    // Read the image file
-    Mat image = imread("brent.jpeg");
+  // Load the input image
+  cv::Mat image = cv::imread(input_filename, cv::IMREAD_COLOR);
+  if (image.empty()) {
+    cerr << "Error: failed to load input image: " << input_filename << endl;
+    return 1;
+  }
 
-    // Check if image was loaded successfully
-    if (image.empty()) {
-        std::cout << "Error: Could not read image file." << std::endl;
-        return -1;
+  // Convert the image to a DataFrame
+  DataFrame data(image.rows * image.cols);
+  for (int y = 0; y < image.rows; ++y) {
+    for (int x = 0; x < image.cols; ++x) {
+      cv::Vec3b pixel = image.at<cv::Vec3b>(y, x);
+      Point p;
+      p.x = static_cast<double>(pixel[2]);
+      p.y = static_cast<double>(pixel[1]);
+      p.z = static_cast<double>(pixel[0]);
+      data[y * image.cols + x] = p;
     }
+  }
 
-    // Convert the image to a 3D array
-    int rows = image.rows;
-    int cols = image.cols;
-    int channels = image.channels();
-    uchar* data = image.data;
+  // Call k-means algorithm with the DataFrame
+  DataFrame centroids = k_means(data, k, num_iterations);
 
-    // Create a 3D array to store the RGB values of the image
-    uchar*** img = new uchar**[rows];
-    for (int i = 0; i < rows; i++) {
-        img[i] = new uchar*[cols];
-        for (int j = 0; j < cols; j++) {
-            img[i][j] = new uchar[channels];
-            for (int k = 0; k < channels; k++) {
-                img[i][j][k] = data[(i*cols + j)*channels + k];
-            }
+  // Convert the DataFrame back to an image
+  for (int y = 0; y < image.rows; ++y) {
+    for (int x = 0; x < image.cols; ++x) {
+      Point p = data[y * image.cols + x];
+      int best_cluster = 0;
+      double best_distance = std::numeric_limits<double>::max();
+      for (int i = 0; i < k; ++i) {
+        double distance = squared_l2_distance(p, centroids[i]);
+        if (distance < best_distance) {
+          best_distance = distance;
+          best_cluster = i;
         }
+      }
+      cv::Vec3b pixel;
+      pixel[2] = static_cast<uchar>(centroids[best_cluster].x);
+      pixel[1] = static_cast<uchar>(centroids[best_cluster].y);
+      pixel[0] = static_cast<uchar>(centroids[best_cluster].z);
+      image.at<cv::Vec3b>(y, x) = pixel;
     }
+  }
 
-    int my_c = 0;
+  // Generate the output image filename
+  const fs::path input_path(input_filename);
+  const string output_filename = (input_path.parent_path() / (input_path.stem().string() + "_compressed" + input_path.extension().string())).string();
 
-    // Use the 3D array to access the RGB values of the image
-    for (int i = 0; i < rows; i++) {
-        for (int j = 0; j < cols; j++) {
-            uchar r = img[i][j][2];
-            uchar g = img[i][j][1];
-            uchar b = img[i][j][0];
-            // Do something with the RGB values...
+  // Save the output image
+  if (!cv::imwrite(output_filename, image)) {
+    cerr << "Error: failed to write output image: " << output_filename << endl;
+    return 1;
+  }
 
-        }
-    }
-
-    std::cout << my_c;
-
-    // Free the memory allocated for the 3D array
-    for (int i = 0; i < rows; i++) {
-        for (int j = 0; j < cols; j++) {
-            delete[] img[i][j];
-        }
-        delete[] img[i];
-    }
-    delete[] img;
-
-    return 0;
+  cout << "Output image saved to: " << output_filename << endl;
+  return 0;
 }
